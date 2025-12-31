@@ -12,6 +12,7 @@ type Config struct {
 	Auth   AuthConfig   `mapstructure:"auth"`
 	Daemon DaemonConfig `mapstructure:"daemon"`
 	Alert  AlertConfig  `mapstructure:"alert"`
+	Server ServerConfig `mapstructure:"server"`
 }
 
 type AuthConfig struct {
@@ -27,6 +28,11 @@ type DaemonConfig struct {
 type AlertConfig struct {
 	TrafficThreshold float64 `mapstructure:"traffic_threshold"` // GB
 	WebhookURL       string  `mapstructure:"webhook_url"`
+}
+
+type ServerConfig struct {
+	Port string `mapstructure:"port"`
+    Token string `mapstructure:"token"` // Optional security token
 }
 
 func InitConfig() {
@@ -49,6 +55,8 @@ func InitConfig() {
 	viper.SetDefault("daemon.interval", 60)
 	viper.SetDefault("alert.traffic_threshold", 80.0)
 	viper.SetDefault("alert.webhook_url", "")
+	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.token", "")
 
 	viper.AutomaticEnv() 
 
@@ -87,6 +95,8 @@ func SaveConfig(cfg *Config) error {
     viper.Set("daemon.interval", cfg.Daemon.Interval)
     viper.Set("alert.traffic_threshold", cfg.Alert.TrafficThreshold)
     viper.Set("alert.webhook_url", cfg.Alert.WebhookURL)
+    viper.Set("server.port", cfg.Server.Port)
+    viper.Set("server.token", cfg.Server.Token)
     
     return viper.SafeWriteConfig()
 }
