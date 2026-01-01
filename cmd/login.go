@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"drcom-go/pkg/config"
 	"drcom-go/pkg/drcom"
@@ -23,21 +25,17 @@ var loginCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			// If config fails (e.g. permissions), we just warn and proceed with defaults/flags
 			fmt.Printf("警告: 加载配置文件失败: %v\n", err)
 			cfg = &config.Config{} 
 		}
 
-		// Priority: Flags > Config > Interactive Prompt
-
-		// Host
 		if flagHost != "" {
 			cfg.Auth.Host = flagHost
 		}
 		if cfg.Auth.Host == "" {
 			prompt := promptui.Prompt{
 				Label:   "登录地址 (Host)",
-				Default: "http://10.10.10.9:801", // Updated based on curl port 801
+				Default: "http://10.10.10.9:801",
 			}
 			res, err := prompt.Run()
 			if err != nil {
@@ -47,7 +45,6 @@ var loginCmd = &cobra.Command{
 		}
         viper.Set("auth.host", cfg.Auth.Host)
 
-		// Username
 		if flagUser != "" {
 			cfg.Auth.Username = flagUser
 		}
@@ -63,7 +60,6 @@ var loginCmd = &cobra.Command{
 		}
         viper.Set("auth.username", cfg.Auth.Username)
 
-		// Password
 		if flagPass != "" {
 			cfg.Auth.Password = flagPass
 		}
@@ -80,7 +76,6 @@ var loginCmd = &cobra.Command{
 		}
         viper.Set("auth.password", cfg.Auth.Password)
 
-        // Auto save config
         home, _ := os.UserHomeDir()
         configPath := home + "/.config/drcom-go/config.yaml"
         if viper.ConfigFileUsed() == "" {
@@ -99,13 +94,29 @@ var loginCmd = &cobra.Command{
 			return
 		}
 
-        // Check success
 		if resp.Result == "1" || resp.Result == 1 || fmt.Sprintf("%v", resp.Result) == "1" {
-			fmt.Printf("\033[32m登录成功: %s\033[0m\n", resp.Msg)
+			fmt.Printf("\033[32m登录接口成功: %s\033[0m\n", resp.Msg)
+            verifyInternet()
 		} else {
-			fmt.Printf("\033[31m登录失败: %s (返回码: %v)\033[0m\n", resp.Msg, resp.Result)
+            // Check "Already online" case loosely
+            if strings.Contains(resp.Msg, "已经在线") {
+                fmt.Printf("\033[33m提示: %s\033[0m\n", resp.Msg)
+                verifyInternet()
+            } else {
+			    fmt.Printf("\033[31m登录失败: %s (返回码: %v)\033[0m\n", resp.Msg, resp.Result)
+            }
 		}
 	},
+}
+
+func verifyInternet() {
+    fmt.Print("正在验证外网连接...")
+    time.Sleep(1 * time.Second)
+    if drcom.CheckInternet() {
+        fmt.Println("\033[32m [通过] (可以访问百度)\033[0m")
+    } else {
+        fmt.Println("\033[31m [失败] (无法访问百度，请检查网络设置或欠费状态)\033[0m")
+    }
 }
 
 func init() {

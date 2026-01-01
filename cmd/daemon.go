@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"net/http"
+	"strings"
 	"time"
 
 	"drcom-go/pkg/config"
@@ -22,7 +22,7 @@ var daemonCmd = &cobra.Command{
 		}
 
 		if cfg.Auth.Username == "" || cfg.Auth.Password == "" {
-			fmt.Println("请先登录配置账号信息ảng")
+			fmt.Println("请先登录配置账号信息。")
 			return
 		}
 
@@ -35,37 +35,61 @@ var daemonCmd = &cobra.Command{
 		color.Cyan("🚀 守护进程已启动 (检测间隔: %v)...", interval)
         
         lastAlertTime := time.Time{}
+        lastStatusLogTime := time.Time{}
 
 		for {
-            if !checkInternet() {
-                color.Yellow("[守护进程] 网络断开。正在尝试重连...")
+            isOnline := drcom.CheckInternet()
+            
+            if !isOnline {
+                color.Yellow("[%s] 网络断开。正在尝试重连...", time.Now().Format("15:04:05"))
                 resp, err := client.Login()
                 if err != nil {
                     color.Red("[错误] 登录请求失败: %v", err)
                 } else {
+                    // Check strict success
                     success := resp.Result == "1" || resp.Result == 1 || fmt.Sprintf("%v", resp.Result) == "1"
-                    // Also count "Already online" as success or at least handled
-                    if success || (resp.Msg != "" && (resp.Msg == "已经在线" || fmt.Sprintf("%v", resp.Msg) == "已经在线")) {
-                         color.Green("[成功] 重新连接成功: %s", resp.Msg)
-                         drcom.SendWebhook(cfg.Alert.WebhookURL, "网络已重连: "+resp.Msg)
+                    alreadyOnline := (resp.Msg != "" && strings.Contains(resp.Msg, "已经在线"))
+                    
+                    if success || alreadyOnline {
+                         // Double check internet
+                         time.Sleep(1 * time.Second) // Wait a sec for NAT/Rule propagation
+                         if drcom.CheckInternet() {
+                             color.Green("[成功] 重新连接成功: %s (且外网可达)", resp.Msg)
+                             drcom.SendWebhook(cfg.Alert.WebhookURL, "网络已重连: "+resp.Msg)
+                         } else {
+                             color.Red("[警告] 登录接口返回成功，但外网依然不可达！")
+                         }
                     } else {
                          color.Red("[失败] 登录失败: %s", resp.Msg)
                     }
                 }
             }
             
-            // Traffic Check (once per hour to avoid spam)
-            if time.Since(lastAlertTime) > 1*time.Hour {
+            // Periodic Status Update (Log every 10 mins or so, Alert on Threshold)
+            // We verify status even if online to update logs/monitor flow
+            if time.Since(lastStatusLogTime) > 10*time.Minute || (!isOnline) {
                 res, err := client.GetStatus()
                 if err == nil {
                     var flowMB float64
                     if len(res.Data) > 0 {
                         flowMB = res.Data[0].UserFlow
+                    } else if res.UserInfo.UserFlow != "" {
+                         // parsing logic fallback...
                     }
+                    
                     flowGB := flowMB / 1024
+                    if isOnline {
+                        fmt.Printf("[%s] 状态正常 | 流量: %.2f GB | 余额: %.2f\n", 
+                            time.Now().Format("15:04"), flowGB, res.Data[0].UserMoney)
+                    }
+                    lastStatusLogTime = time.Now()
+
+                    // Threshold Alert (Keep hourly restriction to avoid spam)
                     threshold := cfg.Alert.TrafficThreshold
-                    if threshold > 0 && flowGB >= threshold {
-                        drcom.SendWebhook(cfg.Alert.WebhookURL, fmt.Sprintf("⚠️ 流量警告: 当前已用 %.2f GB, 超过阈值 %.2f GB", flowGB, threshold))
+                    if threshold > 0 && flowGB >= threshold && time.Since(lastAlertTime) > 1*time.Hour {
+                        msg := fmt.Sprintf("⚠️ 流量警告: 当前已用 %.2f GB, 超过阈值 %.2f GB", flowGB, threshold)
+                        color.Red(msg)
+                        drcom.SendWebhook(cfg.Alert.WebhookURL, msg)
                         lastAlertTime = time.Now()
                     }
                 }
@@ -74,14 +98,6 @@ var daemonCmd = &cobra.Command{
 			time.Sleep(interval)
 		}
 	},
-}
-
-func checkInternet() bool {
-    client := http.Client{
-        Timeout: 3 * time.Second,
-    }
-    _, err := client.Get("http://www.baidu.com")
-    return err == nil
 }
 
 func init() {
