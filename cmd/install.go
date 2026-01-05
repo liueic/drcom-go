@@ -34,7 +34,8 @@ var installCmd = &cobra.Command{
 
 		serviceContent := fmt.Sprintf(`[Unit]
 Description=Dr.COM Daemon Service
-After=network.target
+After=network-online.target syslog.target
+Wants=network-online.target
 
 [Service]
 Type=simple
